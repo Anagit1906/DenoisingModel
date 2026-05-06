@@ -1,21 +1,3 @@
-/**
- * Restora — Image Restoration, Deblurring & Denoising
- *
- * Architecture: Convolutional Autoencoder implemented in TensorFlow.js
- *
- * Since we can't ship trained weights in a static deploy, we implement
- * the full autoencoder computation graph with classical signal processing
- * kernels that approximate what a trained network learns:
- *
- * Encoder path: Gaussian smoothing → Laplacian sharpening → edge preservation
- * Decoder path: Bilateral filtering → frequency domain restoration → residual add
- *
- * This is architecturally equivalent to what a DnCNN/autoencoder learns —
- * the kernels are hand-crafted rather than gradient-descended.
- *
- * PSNR and SSIM are computed correctly per IEEE standard.
- */
-
 'use strict';
 
 // ─── State ────────────────────────────────────────────────
@@ -26,31 +8,31 @@ let intensity          = 0.5;
 let isProcessing       = false;
 
 // ─── DOM refs ─────────────────────────────────────────────
-const uploadZone       = document.getElementById('uploadZone');
-const fileInput        = document.getElementById('fileInput');
-const browseBtn        = document.getElementById('browseBtn');
-const uploadSection    = document.getElementById('uploadSection');
-const processSection   = document.getElementById('processSection');
-const beforeCanvas     = document.getElementById('beforeCanvas');
-const afterCanvas      = document.getElementById('afterCanvas');
-const beforeCtx        = beforeCanvas.getContext('2d');
-const afterCtx         = afterCanvas.getContext('2d');
-const processBtn       = document.getElementById('processBtn');
-const processBtnLabel  = document.getElementById('processBtnLabel');
+const uploadZone        = document.getElementById('uploadZone');
+const fileInput         = document.getElementById('fileInput');
+const browseBtn         = document.getElementById('browseBtn');
+const uploadSection     = document.getElementById('uploadSection');
+const processSection    = document.getElementById('processSection');
+const beforeCanvas      = document.getElementById('beforeCanvas');
+const afterCanvas       = document.getElementById('afterCanvas');
+const beforeCtx         = beforeCanvas.getContext('2d');
+const afterCtx          = afterCanvas.getContext('2d');
+const processBtn        = document.getElementById('processBtn');
+const processBtnLabel   = document.getElementById('processBtnLabel');
 const processingOverlay = document.getElementById('processingOverlay');
-const procText         = document.getElementById('procText');
-const procBar          = document.getElementById('procBar');
-const downloadBtn      = document.getElementById('downloadBtn');
-const resetBtn         = document.getElementById('resetBtn');
-const intensitySlider  = document.getElementById('intensitySlider');
-const sliderDisplay    = document.getElementById('sliderDisplay');
-const psnrVal          = document.getElementById('psnrVal');
-const ssimVal          = document.getElementById('ssimVal');
-const noiseVal         = document.getElementById('noiseVal');
-const deltaVal         = document.getElementById('deltaVal');
-const modeTabs         = document.querySelectorAll('.mode-tab');
-const archChips        = document.querySelectorAll('.arch-chip');
-const archDesc         = document.getElementById('archDesc');
+const procText          = document.getElementById('procText');
+const procBar           = document.getElementById('procBar');
+const downloadBtn       = document.getElementById('downloadBtn');
+const resetBtn          = document.getElementById('resetBtn');
+const intensitySlider   = document.getElementById('intensitySlider');
+const sliderDisplay     = document.getElementById('sliderDisplay');
+const psnrVal           = document.getElementById('psnrVal');
+const ssimVal           = document.getElementById('ssimVal');
+const noiseVal          = document.getElementById('noiseVal');
+const deltaVal          = document.getElementById('deltaVal');
+const modeTabs          = document.querySelectorAll('.mode-tab');
+const archChips         = document.querySelectorAll('.arch-chip');
+const archDesc          = document.getElementById('archDesc');
 
 // ─── Architecture descriptions ────────────────────────────
 const ARCH_DESCS = {
@@ -86,8 +68,15 @@ intensitySlider.addEventListener('input', () => {
 });
 
 // ─── Upload handlers ──────────────────────────────────────
-browseBtn.addEventListener('click', () => fileInput.click());
-uploadZone.addEventListener('click', () => fileInput.click());
+browseBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  fileInput.click();
+});
+
+uploadZone.addEventListener('click', e => {
+  if (e.target === browseBtn) return;
+  fileInput.click();
+});
 
 uploadZone.addEventListener('dragover', e => {
   e.preventDefault();
@@ -116,7 +105,9 @@ resetBtn.addEventListener('click', () => {
   fileInput.value = '';
   downloadBtn.disabled = true;
   resetMetrics();
-  processBtnLabel.textContent = 'Process Image';
+  processBtnLabel.textContent = '▶ Process Image';
+  const badge = document.getElementById('restoredBadge');
+  if (badge) badge.classList.add('hidden');
 });
 
 // ─── Load Image ───────────────────────────────────────────
@@ -125,35 +116,31 @@ function loadImage(file) {
   reader.onload = e => {
     const img = new Image();
     img.onload = () => {
-      // Constrain to max 800px for performance
       const MAX = 800;
       let w = img.width, h = img.height;
       if (w > MAX || h > MAX) {
         if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
         else        { w = Math.round(w * MAX / h); h = MAX; }
       }
-
       beforeCanvas.width  = w; beforeCanvas.height = h;
       afterCanvas.width   = w; afterCanvas.height  = h;
-
       beforeCtx.drawImage(img, 0, 0, w, h);
-      afterCtx.drawImage(img, 0, 0, w, h); // initially same
-
+      afterCtx.drawImage(img, 0, 0, w, h);
       originalImageData = beforeCtx.getImageData(0, 0, w, h);
-
       uploadSection.classList.add('hidden');
       processSection.classList.remove('hidden');
-
       downloadBtn.disabled = true;
       resetMetrics();
-      processBtnLabel.textContent = 'Process Image';
+      processBtnLabel.textContent = '▶ Process Image';
+      const badge = document.getElementById('restoredBadge');
+      if (badge) badge.classList.add('hidden');
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
 
-// ─── Main process button ──────────────────────────────────
+// ─── Process button ───────────────────────────────────────
 processBtn.addEventListener('click', async () => {
   if (isProcessing || !originalImageData) return;
   await processImage();
@@ -177,48 +164,34 @@ async function processImage() {
 
   for (const [pct, msg] of steps) {
     setProgress(pct, msg);
-    await sleep(280 + Math.random() * 220);
+    await sleep(260 + Math.random() * 200);
   }
 
-  // Run the actual processing
   const result = await runAutoencoder(originalImageData, currentMode, intensity);
   restoredImageData = result;
-
-  // Paint the after canvas
   afterCtx.putImageData(result, 0, 0);
-
-  // Compute metrics
   const metrics = computeMetrics(originalImageData, result);
   displayMetrics(metrics);
-
   processingOverlay.classList.remove('active');
   isProcessing = false;
-  processBtnLabel.textContent = 'Reprocess';
+  processBtnLabel.textContent = '✓ Reprocess';
   downloadBtn.disabled = false;
+  // Show restored badge only now
+  const badge = document.getElementById('restoredBadge');
+  if (badge) badge.classList.remove('hidden');
 }
 
-// ─── Autoencoder Processing Engine ───────────────────────
-/**
- * Implements the full autoencoder pipeline in pure JS (no TF.js needed for this).
- * Equivalent to what a trained Conv-AE learns:
- * Encoder: successive gaussian blur + edge detection (feature compression)
- * Bottleneck: frequency-domain operations
- * Decoder: detail injection + residual learning
- */
+// ─── Dispatch ─────────────────────────────────────────────
 async function runAutoencoder(imageData, mode, intensity) {
   const { width: w, height: h, data } = imageData;
   const src = new Float32Array(data);
-
   let out;
-
   switch (mode) {
     case 'denoise': out = await denoise(src, w, h, intensity); break;
     case 'deblur':  out = await deblur(src, w, h, intensity);  break;
     case 'restore': out = await restore(src, w, h, intensity); break;
     default:        out = src.slice();
   }
-
-  // Clamp and build output ImageData
   const result = new ImageData(w, h);
   for (let i = 0; i < out.length; i += 4) {
     result.data[i]   = Math.min(255, Math.max(0, Math.round(out[i])));
@@ -229,103 +202,116 @@ async function runAutoencoder(imageData, mode, intensity) {
   return result;
 }
 
-// ─── Denoise: Bilateral filter (edge-preserving) ──────────
+// ─── DENOISE: Multi-pass median filter ───────────────────
+// For heavy salt-and-pepper noise (>20% pixels corrupted),
+// a single 3×3 median pass is insufficient — pixels adjacent to
+// noise get corrupted values pulled into their neighbourhood.
+// Solution: run 3 passes with increasing then decreasing window
+// size (coarse-to-fine), which progressively eliminates speckles
+// without smearing edges.
 async function denoise(src, w, h, intensity) {
-  const out   = src.slice();
-  const sigma_s = 3 + intensity * 8;   // spatial sigma
-  const sigma_r = 20 + intensity * 40; // range sigma
-  const radius  = Math.ceil(sigma_s * 1.5);
+  const passes = intensity > 0.6 ? 3 : 2;
+  // Pass radii: [3, 2, 1] = progressively finer cleanup
+  const radii = passes === 3 ? [3, 2, 1] : [2, 1];
 
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      for (let c = 0; c < 3; c++) {
-        let sum = 0, wSum = 0;
-        const centerVal = src[(y * w + x) * 4 + c];
+  let current = src.slice();
 
-        for (let dy = -radius; dy <= radius; dy++) {
-          for (let dx = -radius; dx <= radius; dx++) {
-            const ny = y + dy, nx = x + dx;
-            if (ny < 0 || ny >= h || nx < 0 || nx >= w) continue;
-            const nVal = src[(ny * w + nx) * 4 + c];
-            const distSq = dx * dx + dy * dy;
-            const rangeSq = (nVal - centerVal) ** 2;
-            const w_s = Math.exp(-distSq / (2 * sigma_s * sigma_s));
-            const w_r = Math.exp(-rangeSq / (2 * sigma_r * sigma_r));
-            sum  += w_s * w_r * nVal;
-            wSum += w_s * w_r;
+  for (const radius of radii) {
+    const next = current.slice();
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        for (let c = 0; c < 3; c++) {
+          const vals = [];
+          for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+              const ny = Math.min(h - 1, Math.max(0, y + dy));
+              const nx = Math.min(w - 1, Math.max(0, x + dx));
+              vals.push(current[(ny * w + nx) * 4 + c]);
+            }
           }
+          vals.sort((a, b) => a - b);
+          next[(y * w + x) * 4 + c] = vals[Math.floor(vals.length / 2)];
         }
-        out[(y * w + x) * 4 + c] = sum / wSum;
       }
+      if (y % 4 === 0) await sleep(0);
     }
-    // yield to browser every 8 rows
-    if (y % 8 === 0) await sleep(0);
+    current = next;
   }
 
-  // Residual learning: blend with original to preserve detail
-  const alpha = 0.15; // small residual from original sharpens detail
+  // Final pass: edge-aware Gaussian to recover smooth gradients
+  const sigma = 0.6 + intensity * 0.5;
+  const smoothed = gaussianBlur(current, w, h, sigma);
+  const edgeMask = computeEdgeMask(current, w, h);
+  const out = current.slice();
   for (let i = 0; i < out.length; i += 4) {
+    const e = Math.min(1, edgeMask[i / 4] * 5);
     for (let c = 0; c < 3; c++) {
-      out[i + c] = out[i + c] * (1 - alpha) + src[i + c] * alpha;
+      out[i + c] = current[i + c] * e + smoothed[i + c] * (1 - e);
     }
   }
-
   return out;
 }
 
-// ─── Deblur: Unsharp masking + Wiener-style sharpening ───
+// ─── DEBLUR: Multi-pass aggressive sharpening ─────────────
 async function deblur(src, w, h, intensity) {
-  const out = src.slice();
+  let out = src.slice();
 
-  // Step 1: Gaussian blur to estimate blur kernel
-  const blurred = gaussianBlur(src, w, h, 1.2);
-
-  // Step 2: Wiener deconvolution approximation (unsharp masking)
-  // out = src + lambda * (src - blurred)  [high-frequency injection]
-  const lambda = 1.2 + intensity * 2.8;
-
+  // Pass 1: broad unsharp mask
+  const blurred1 = gaussianBlur(src, w, h, 3.0);
+  const lambda1  = 2.0 + intensity * 4.0;
   for (let i = 0; i < src.length; i += 4) {
     for (let c = 0; c < 3; c++) {
-      const sharp = src[i + c] + lambda * (src[i + c] - blurred[i + c]);
-      out[i + c] = sharp;
+      out[i+c] = src[i+c] + lambda1 * (src[i+c] - blurred1[i+c]);
     }
   }
-
-  // Step 3: Edge-preserving smoothing to reduce ringing
-  const smoothed = gaussianBlur(out, w, h, 0.5);
-  const edgeMask = computeEdgeMask(src, w, h);
-
-  for (let i = 0; i < out.length; i += 4) {
-    const edgeW = edgeMask[i / 4];
-    for (let c = 0; c < 3; c++) {
-      // At edges: keep sharp; in flat regions: blend with smoothed
-      out[i + c] = out[i + c] * edgeW + smoothed[i + c] * (1 - edgeW);
-    }
-  }
-
   await sleep(0);
+
+  // Pass 2: fine unsharp mask
+  const blurred2 = gaussianBlur(out, w, h, 0.9);
+  const lambda2  = 1.0 + intensity * 2.0;
+  for (let i = 0; i < out.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      out[i+c] = out[i+c] + lambda2 * (out[i+c] - blurred2[i+c]);
+    }
+  }
+  await sleep(0);
+
+  // Pass 3: Laplacian sharpening kernel
+  const lapKernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
+  const lapStrength = 0.25 + intensity * 0.45;
+  const laplacian = convolve3x3(out, w, h, lapKernel);
+  for (let i = 0; i < out.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      out[i+c] = out[i+c] * (1 - lapStrength) + laplacian[i+c] * lapStrength;
+    }
+  }
+  await sleep(0);
+
+  // Pass 4: edge contrast boost
+  const edgeMask = computeEdgeMask(src, w, h);
+  const contrastBoost = 1 + intensity * 0.5;
+  for (let i = 0; i < out.length; i += 4) {
+    const e = edgeMask[i / 4];
+    for (let c = 0; c < 3; c++) {
+      out[i+c] = 128 + (out[i+c] - 128) * (1 + e * (contrastBoost - 1));
+    }
+  }
   return out;
 }
 
-// ─── Restore: JPEG artifact removal + enhancement ─────────
+// ─── RESTORE: JPEG artifact removal ───────────────────────
 async function restore(src, w, h, intensity) {
-  // Step 1: Median-like smoothing to kill block artifacts
   const deblocked = medianApprox(src, w, h);
   await sleep(0);
-
-  // Step 2: Gentle sharpening pass
   const sigma = 0.8;
   const blurred = gaussianBlur(deblocked, w, h, sigma);
   const lambda = 0.4 + intensity * 0.8;
-
   const out = deblocked.slice();
   for (let i = 0; i < src.length; i += 4) {
     for (let c = 0; c < 3; c++) {
       out[i + c] = deblocked[i + c] + lambda * (deblocked[i + c] - blurred[i + c]);
     }
   }
-
-  // Step 3: Colour saturation boost (restoration often desaturates)
   const satBoost = 1 + intensity * 0.3;
   for (let i = 0; i < out.length; i += 4) {
     const r = out[i], g = out[i+1], b = out[i+2];
@@ -334,27 +320,21 @@ async function restore(src, w, h, intensity) {
     out[i+1] = lum + satBoost * (g - lum);
     out[i+2] = lum + satBoost * (b - lum);
   }
-
   return out;
 }
 
-// ─── Signal processing helpers ────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────
 function gaussianBlur(src, w, h, sigma) {
   const out    = src.slice();
   const radius = Math.ceil(sigma * 2.5);
   const kernel = [];
   let kSum = 0;
-
   for (let i = -radius; i <= radius; i++) {
     const v = Math.exp(-(i * i) / (2 * sigma * sigma));
-    kernel.push(v);
-    kSum += v;
+    kernel.push(v); kSum += v;
   }
   for (let i = 0; i < kernel.length; i++) kernel[i] /= kSum;
-
   const tmp = src.slice();
-
-  // Horizontal pass
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       for (let c = 0; c < 3; c++) {
@@ -367,8 +347,6 @@ function gaussianBlur(src, w, h, sigma) {
       }
     }
   }
-
-  // Vertical pass
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       for (let c = 0; c < 3; c++) {
@@ -394,26 +372,38 @@ function computeEdgeMask(src, w, h) {
         gx += Math.abs(get(y, x+1) - get(y, x-1));
         gy += Math.abs(get(y+1, x) - get(y-1, x));
       }
-      const mag = Math.sqrt(gx * gx + gy * gy) / (3 * 255 * 2);
-      mask[y * w + x] = Math.min(1, mag * 4);
+      mask[y * w + x] = Math.min(1, Math.sqrt(gx*gx + gy*gy) / (3 * 255 * 2) * 4);
     }
   }
   return mask;
 }
 
 function medianApprox(src, w, h) {
-  // Fast 3-channel 3×3 mean filter (approximates median for smooth restoration)
   const out = src.slice();
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
       for (let c = 0; c < 3; c++) {
         let sum = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++)
             sum += src[((y + dy) * w + (x + dx)) * 4 + c];
-          }
-        }
         out[(y * w + x) * 4 + c] = sum / 9;
+      }
+    }
+  }
+  return out;
+}
+
+function convolve3x3(src, w, h, kernel) {
+  const out = src.slice();
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let ky = -1; ky <= 1; ky++)
+          for (let kx = -1; kx <= 1; kx++)
+            sum += src[((y+ky)*w+(x+kx))*4+c] * kernel[(ky+1)*3+(kx+1)];
+        out[(y * w + x) * 4 + c] = sum;
       }
     }
   }
@@ -422,85 +412,53 @@ function medianApprox(src, w, h) {
 
 // ─── Metrics ──────────────────────────────────────────────
 function computeMetrics(original, restored) {
-  const o = original.data;
-  const r = restored.data;
+  const o = original.data, r = restored.data;
   const n = o.length / 4;
-
-  // MSE
-  let mse = 0;
-  let mad = 0;
+  let mse = 0, mad = 0;
   for (let i = 0; i < o.length; i += 4) {
     for (let c = 0; c < 3; c++) {
-      const diff = o[i + c] - r[i + c];
+      const diff = o[i+c] - r[i+c];
       mse += diff * diff;
       mad += Math.abs(diff);
     }
   }
-  mse /= (n * 3);
-  mad /= (n * 3);
-
-  // PSNR
-  const psnr = mse < 1e-10 ? 100 : 10 * Math.log10((255 * 255) / mse);
-
-  // SSIM (simplified per-channel mean)
+  mse /= (n * 3); mad /= (n * 3);
+  const psnr = mse < 1e-10 ? 100 : 10 * Math.log10(65025 / mse);
   const ssim = computeSSIM(o, r, original.width, original.height);
-
-  // Noise estimate (std dev of difference)
   let mean = 0;
   const diffs = [];
-  for (let i = 0; i < o.length; i += 4) {
-    for (let c = 0; c < 3; c++) {
-      diffs.push(Math.abs(o[i + c] - r[i + c]));
-      mean += diffs[diffs.length - 1];
-    }
-  }
+  for (let i = 0; i < o.length; i += 4)
+    for (let c = 0; c < 3; c++) { diffs.push(Math.abs(o[i+c]-r[i+c])); mean += diffs[diffs.length-1]; }
   mean /= diffs.length;
   let variance = 0;
   for (const d of diffs) variance += (d - mean) ** 2;
-  const noiseStd = Math.sqrt(variance / diffs.length);
-
-  return { psnr, ssim, noiseStd, mad };
+  return { psnr, ssim, noiseStd: Math.sqrt(variance / diffs.length), mad };
 }
 
 function computeSSIM(a, b, w, h) {
-  const C1 = (0.01 * 255) ** 2;
-  const C2 = (0.03 * 255) ** 2;
-  const blockSize = 8;
+  const C1 = (0.01*255)**2, C2 = (0.03*255)**2;
+  const bs = 8;
   let ssimSum = 0, count = 0;
-
-  for (let y = 0; y < h - blockSize; y += blockSize) {
-    for (let x = 0; x < w - blockSize; x += blockSize) {
+  for (let y = 0; y < h - bs; y += bs) {
+    for (let x = 0; x < w - bs; x += bs) {
       let muA = 0, muB = 0;
       const vals = [];
-
-      for (let dy = 0; dy < blockSize; dy++) {
-        for (let dx = 0; dx < blockSize; dx++) {
-          const i = ((y + dy) * w + (x + dx)) * 4;
-          const va = (a[i] + a[i+1] + a[i+2]) / 3;
-          const vb = (b[i] + b[i+1] + b[i+2]) / 3;
-          muA += va; muB += vb;
-          vals.push([va, vb]);
+      for (let dy = 0; dy < bs; dy++) {
+        for (let dx = 0; dx < bs; dx++) {
+          const i = ((y+dy)*w+(x+dx))*4;
+          const va = (a[i]+a[i+1]+a[i+2])/3;
+          const vb = (b[i]+b[i+1]+b[i+2])/3;
+          muA += va; muB += vb; vals.push([va,vb]);
         }
       }
-
-      const N = vals.length;
-      muA /= N; muB /= N;
-
-      let sigA2 = 0, sigB2 = 0, sigAB = 0;
-      for (const [va, vb] of vals) {
-        sigA2 += (va - muA) ** 2;
-        sigB2 += (vb - muB) ** 2;
-        sigAB += (va - muA) * (vb - muB);
-      }
-      sigA2 /= N; sigB2 /= N; sigAB /= N;
-
-      const num = (2 * muA * muB + C1) * (2 * sigAB + C2);
-      const den = (muA ** 2 + muB ** 2 + C1) * (sigA2 + sigB2 + C2);
-      ssimSum += num / den;
+      const N = vals.length; muA /= N; muB /= N;
+      let sA2=0,sB2=0,sAB=0;
+      for (const [va,vb] of vals) { sA2+=(va-muA)**2; sB2+=(vb-muB)**2; sAB+=(va-muA)*(vb-muB); }
+      sA2/=N; sB2/=N; sAB/=N;
+      ssimSum += ((2*muA*muB+C1)*(2*sAB+C2)) / ((muA**2+muB**2+C1)*(sA2+sB2+C2));
       count++;
     }
   }
-
   return count > 0 ? ssimSum / count : 1;
 }
 
@@ -509,19 +467,15 @@ function displayMetrics({ psnr, ssim, noiseStd, mad }) {
   ssimVal.textContent  = ssim.toFixed(3);
   noiseVal.textContent = noiseStd.toFixed(1);
   deltaVal.textContent = mad.toFixed(1);
-
-  // Colour coding
   psnrVal.style.color  = psnr > 30 ? 'var(--green)' : psnr > 25 ? 'var(--amber)' : 'var(--red)';
   ssimVal.style.color  = ssim > 0.9 ? 'var(--green)' : ssim > 0.8 ? 'var(--amber)' : 'var(--red)';
 }
 
 function resetMetrics() {
-  psnrVal.textContent  = '—';
-  ssimVal.textContent  = '—';
-  noiseVal.textContent = '—';
-  deltaVal.textContent = '—';
-  psnrVal.style.color  = '';
-  ssimVal.style.color  = '';
+  ['psnrVal','ssimVal','noiseVal','deltaVal'].forEach(id => {
+    document.getElementById(id).textContent = '—';
+    document.getElementById(id).style.color = '';
+  });
 }
 
 // ─── Download ─────────────────────────────────────────────
@@ -533,12 +487,5 @@ downloadBtn.addEventListener('click', () => {
   link.click();
 });
 
-// ─── Utilities ────────────────────────────────────────────
-function setProgress(pct, msg) {
-  procBar.style.width = pct + '%';
-  procText.textContent = msg;
-}
-
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
+function setProgress(pct, msg) { procBar.style.width = pct + '%'; procText.textContent = msg; }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
