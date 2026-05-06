@@ -82,6 +82,9 @@
         <span class="viewer-label">Before <em>→</em> After</span>
         <div class="viewer-actions">
           <button class="action-btn" id="resetBtn" title="Upload new image">↩ New image</button>
+          <button class="process-btn-inline" id="processBtn">
+            <span id="processBtnLabel">▶ Process Image</span>
+          </button>
           <button class="action-btn primary" id="downloadBtn" title="Download result" disabled>↓ Download</button>
         </div>
       </div>
@@ -102,7 +105,7 @@
 
       <!-- After -->
       <div class="compare-pane pane-after">
-        <div class="pane-badge after-badge">Restored</div>
+        <div class="pane-badge after-badge hidden" id="restoredBadge">Restored</div>
         <canvas id="afterCanvas"></canvas>
         <div class="processing-overlay" id="processingOverlay">
           <div class="proc-spinner"></div>
@@ -168,9 +171,7 @@
       </div>
     </div>
 
-    <button class="process-btn" id="processBtn">
-      <span id="processBtnLabel">Process Image</span>
-    </button>
+
 
   </section>
 
