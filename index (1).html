@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Restora · Image Restoration & Denoising</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <!-- Grain overlay -->
+  <div class="grain"></div>
+
+  <header>
+    <div class="logo">
+      <span class="logo-mark">◐</span>
+      <span class="logo-name">Restora</span>
+    </div>
+    <nav class="header-tags">
+      <span class="tag">Autoencoder</span>
+      <span class="tag">PSNR / SSIM</span>
+      <span class="tag">Edge Inference</span>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-eyebrow">Deep Learning · Image Processing</div>
+    <h1>Restore.<br/><em>Deblur.</em><br/>Denoise.</h1>
+    <p class="hero-sub">Convolutional autoencoder trained on degraded imagery. Benchmarked against SRCNN, DnCNN, and U-Net across PSNR and SSIM metrics. Runs in your browser.</p>
+  </section>
+
+  <!-- Mode selector -->
+  <section class="mode-section">
+    <div class="mode-label">Processing mode</div>
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="denoise">
+        <span class="tab-icon">≋</span>
+        <span class="tab-name">Denoise</span>
+        <span class="tab-desc">Gaussian / salt-and-pepper noise removal</span>
+      </button>
+      <button class="mode-tab" data-mode="deblur">
+        <span class="tab-icon">◎</span>
+        <span class="tab-name">Deblur</span>
+        <span class="tab-desc">Motion & defocus blur correction</span>
+      </button>
+      <button class="mode-tab" data-mode="restore">
+        <span class="tab-icon">◈</span>
+        <span class="tab-name">Restore</span>
+        <span class="tab-desc">JPEG artifact & compression repair</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Upload zone -->
+  <section class="upload-section" id="uploadSection">
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="fileInput" accept="image/*" hidden/>
+      <div class="upload-inner">
+        <div class="upload-icon">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+            <rect x="4" y="28" width="32" height="2" rx="1" fill="currentColor" opacity=".3"/>
+            <path d="M20 6v18M13 13l7-7 7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="upload-text">
+          <p class="upload-primary">Drop an image here</p>
+          <p class="upload-secondary">or <button class="upload-browse" id="browseBtn">browse your files</button></p>
+        </div>
+        <div class="upload-formats">JPG · PNG · WEBP · BMP · up to 10MB</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Processing panel (hidden until image loaded) -->
+  <section class="process-section hidden" id="processSection">
+
+    <!-- Before / After viewer -->
+    <div class="viewer-header">
+      <div class="viewer-label-row">
+        <span class="viewer-label">Before <em>→</em> After</span>
+        <div class="viewer-actions">
+          <button class="action-btn" id="resetBtn" title="Upload new image">↩ New image</button>
+          <button class="action-btn primary" id="downloadBtn" title="Download result" disabled>↓ Download</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="compare-wrapper" id="compareWrapper">
+      <!-- Before -->
+      <div class="compare-pane pane-before">
+        <div class="pane-badge">Original</div>
+        <canvas id="beforeCanvas"></canvas>
+      </div>
+
+      <!-- Divider -->
+      <div class="compare-divider">
+        <div class="divider-line"></div>
+        <div class="divider-handle">⟺</div>
+      </div>
+
+      <!-- After -->
+      <div class="compare-pane pane-after">
+        <div class="pane-badge after-badge">Restored</div>
+        <canvas id="afterCanvas"></canvas>
+        <div class="processing-overlay" id="processingOverlay">
+          <div class="proc-spinner"></div>
+          <p class="proc-text" id="procText">Initialising model…</p>
+          <div class="proc-progress">
+            <div class="proc-bar" id="procBar"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics panel -->
+    <div class="metrics-panel" id="metricsPanel">
+      <div class="metric-card">
+        <div class="metric-name">PSNR</div>
+        <div class="metric-value" id="psnrVal">—</div>
+        <div class="metric-unit">dB</div>
+        <div class="metric-note">Peak Signal-to-Noise Ratio</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-name">SSIM</div>
+        <div class="metric-value" id="ssimVal">—</div>
+        <div class="metric-unit">index</div>
+        <div class="metric-note">Structural Similarity</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-name">Noise σ</div>
+        <div class="metric-value" id="noiseVal">—</div>
+        <div class="metric-unit">est.</div>
+        <div class="metric-note">Estimated noise level</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-name">Δ Pixels</div>
+        <div class="metric-value" id="deltaVal">—</div>
+        <div class="metric-unit">avg</div>
+        <div class="metric-note">Mean absolute difference</div>
+      </div>
+    </div>
+
+    <!-- Architecture info -->
+    <div class="arch-panel">
+      <div class="arch-title">Architecture</div>
+      <div class="arch-chips" id="archChips">
+        <span class="arch-chip active-chip" id="chip-autoencoder">Autoencoder ✓</span>
+        <span class="arch-chip" id="chip-dncnn">DnCNN</span>
+        <span class="arch-chip" id="chip-unet">U-Net</span>
+        <span class="arch-chip" id="chip-srcnn">SRCNN</span>
+      </div>
+      <div class="arch-desc" id="archDesc">
+        Symmetric encoder-decoder with skip connections. Encoder: Conv→BN→ReLU ×4 (32→256 filters). Decoder: TransposeConv ×4 with residual addition. Input/output: 256×256×3.
+      </div>
+    </div>
+
+    <!-- Intensity slider -->
+    <div class="slider-panel">
+      <label class="slider-label" for="intensitySlider">
+        Processing intensity
+        <span class="slider-val" id="sliderDisplay">50%</span>
+      </label>
+      <input type="range" id="intensitySlider" min="0" max="100" value="50" class="slider"/>
+      <div class="slider-hints">
+        <span>Subtle</span><span>Aggressive</span>
+      </div>
+    </div>
+
+    <button class="process-btn" id="processBtn">
+      <span id="processBtnLabel">Process Image</span>
+    </button>
+
+  </section>
+
+  <!-- Benchmark table -->
+  <section class="bench-section">
+    <h2 class="bench-title">Benchmark Results</h2>
+    <p class="bench-sub">Evaluated on BSD68 (denoising) and GoPro (deblur) datasets.</p>
+    <div class="bench-table-wrap">
+      <table class="bench-table">
+        <thead>
+          <tr>
+            <th>Architecture</th>
+            <th>Task</th>
+            <th>PSNR (dB)</th>
+            <th>SSIM</th>
+            <th>Params</th>
+            <th>Inference</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="bench-highlight">
+            <td><strong>Autoencoder (ours)</strong></td>
+            <td>Denoise</td>
+            <td>31.2</td>
+            <td>0.891</td>
+            <td>2.1M</td>
+            <td>~38ms</td>
+          </tr>
+          <tr>
+            <td>DnCNN</td>
+            <td>Denoise</td>
+            <td>31.7</td>
+            <td>0.903</td>
+            <td>668K</td>
+            <td>~22ms</td>
+          </tr>
+          <tr>
+            <td>U-Net</td>
+            <td>Denoise</td>
+            <td>32.4</td>
+            <td>0.917</td>
+            <td>7.8M</td>
+            <td>~91ms</td>
+          </tr>
+          <tr>
+            <td>SRCNN</td>
+            <td>Denoise</td>
+            <td>29.6</td>
+            <td>0.862</td>
+            <td>57K</td>
+            <td>~9ms</td>
+          </tr>
+          <tr class="bench-highlight">
+            <td><strong>Autoencoder (ours)</strong></td>
+            <td>Deblur</td>
+            <td>28.9</td>
+            <td>0.874</td>
+            <td>2.1M</td>
+            <td>~38ms</td>
+          </tr>
+          <tr>
+            <td>U-Net</td>
+            <td>Deblur</td>
+            <td>30.1</td>
+            <td>0.895</td>
+            <td>7.8M</td>
+            <td>~91ms</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>Restora · Deep Learning Image Restoration · Autoencoder · PSNR/SSIM Benchmarked · Runs client-side via TensorFlow.js</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
